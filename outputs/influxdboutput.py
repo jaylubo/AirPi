@@ -1,13 +1,28 @@
 import output
 import datetime
 import time
+import numpy as np
+
 import influxdb
 
-class InfluxDB(output.Output):
+# dewpoint constants (see https://en.wikipedia.org/wiki/Dew_point)
+b = 17.27
+c = 237.7
+
+def gamma( Tc, RH ):
+    """ gamma function takes temperature in celcius and percent relative humidity """
+    return ( (np.log(RH/100.0)) + (b * Tc)/(c + Tc) )
+
+def dewpoint ( Tc, RH ):
+    """ calculate dewpoint in Celcius given temperature in celcius and relative humidity """
+    return ( ( c * gamma(Tc, RH)) / (b - gamma(Tc, RH)) )
+
+
+class InfluxDBWriter(output.Output):
     requiredSpecificParams = ["host", "port"]
 
     def __init__(self, config):
-        super(InfluxDB, self).__init__(config)
+        super(InfluxDBWriter, self).__init__(config)
 
         self.host = self.params["host"]
         self.port = self.params["port"]
@@ -45,11 +60,11 @@ class InfluxDB(output.Output):
         if self.params["calibration"]:
             datapoints = self.cal.calibrate(datapoints)
 
-        client = InfluxDBClient(host=self.host, port=self.port, database=self.params["database"])
+        client = influxdb.InfluxDBClient(host=self.host, port=self.port, database='airpi')
 
         tags = { 'hostname' : self.gethostname(),
-                 'location' : self.params['location'],
-                 'station' : self.params['station'] }
+                 'location' : 'basement',
+                 'station' : 'MyAirPiBoard' }
 
         stamp = datetime.datetime.utcnow().isoformat()
 
@@ -59,11 +74,8 @@ class InfluxDB(output.Output):
                 continue
             if point["name"] != "Location":
                 fields[point["sensor"]] = point["value"]
-            else:
-                props=["latitude", "longitude", "altitude", "exposure", "disposition"]
-                for prop in props:
-                    fields[prop] = point[prop]
 
+	fields["DHT22-dew"] = dewpoint( fields["DHT22-temp"], fields["DHT22-hum"])
         d = { "measurement": "record",
               "tags": tags,
               "time": stamp,
